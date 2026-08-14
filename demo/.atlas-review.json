@@ -1,0 +1,20 @@
+{
+  "app": "4cf9100b-2d6d-4771-bbc2-213278f0864e",
+  "repo": "ethanzhoucool/voyage",
+  "workdir": ".atlas-review",
+  "policy": {
+    "compare_against": "approved",
+    "default": { "max_change_pct": 2.0, "require_approval": false },
+    "screens": {
+      "trips_list": {
+        "max_change_pct": 1.0,
+        "require_approval": true,
+        "watch": [
+          { "name": "price column", "box": [0.78, 0.15, 0.22, 0.8], "severity": "error" },
+          { "name": "screen title", "box": [0.0, 0.1, 0.6, 0.08], "severity": "error" }
+        ]
+      }
+    },
+    "diff": { "ignore": ["status_bar"], "tolerance": 32 }
+  }
+}

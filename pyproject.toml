@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atlas-review"
+version = "0.1.0"
+description = "Visual review for Revyl Atlas screens: build-over-build image diffs, change blame, approvals and alerts"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "ethan zhou" }]
+dependencies = [
+    "Pillow>=9.0",
+    "numpy>=1.21",
+]
+
+[project.scripts]
+atlas-review = "atlas_review.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+atlas_review = ["assets/*.css", "assets/*.js"]

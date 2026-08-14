@@ -1,0 +1,13 @@
+# Derived data: screenshot cache and generated reports.
+**/.atlas-review/cache/
+**/.atlas-review/served/
+**/atlas-review-report/
+demo/examples/report/
+*.log
+
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.DS_Store
