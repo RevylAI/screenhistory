@@ -47,6 +47,17 @@ def _humanize(ts: Optional[_dt.datetime]) -> str:
     return ts.strftime("%b %-d, %Y")
 
 
+def builds_through(builds: List["Build"], head: "Build") -> List["Build"]:
+    """The history up to and including `head`, oldest first.
+
+    Slices on position, never on `uploaded_at`: that field is optional and
+    parses to a naive or aware datetime depending on which shape Revyl sent,
+    so ordering by it raises TypeError on ordinary build lists.
+    """
+    index = next((i for i, b in enumerate(builds) if b.id == head.id), len(builds) - 1)
+    return list(builds[: index + 1])
+
+
 @dataclass
 class Build:
     """One uploaded app build, plus whatever git provenance came with it.

@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .client import AtlasClient
 from .diff import Box, DiffOptions, DiffResult, diff_versions
-from .models import Build, Screen
+from .models import Build, Screen, builds_through
 from .review import APPROVED, ReviewStore
 from .timeline import ScreenHistory
 
@@ -227,7 +227,7 @@ def check(
     if not builds:
         return AlertReport(app=client.app, build=None)
     head = build or builds[-1]
-    build_order = [b.id for b in builds if (b.uploaded_at or b.id) <= (head.uploaded_at or head.id)]
+    build_order = [b.id for b in builds_through(builds, head)]
     by_id = {b.id: b for b in builds}
     report = AlertReport(app=client.app, build=head)
 

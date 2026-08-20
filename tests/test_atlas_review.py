@@ -24,7 +24,7 @@ from atlas_review import (  # noqa: E402
     diff_versions,
 )
 from atlas_review.alerts import ERROR, INFO, ScreenPolicy, WatchRegion  # noqa: E402
-from atlas_review.models import _humanize, _parse_ts  # noqa: E402
+from atlas_review.models import _humanize, _parse_ts, builds_through  # noqa: E402
 
 W, H = 200, 400
 
@@ -362,8 +362,27 @@ class AlertReporting(unittest.TestCase):
         self.assertEqual(self._report().sorted()[0].severity, ERROR)
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
+class BuildOrdering(unittest.TestCase):
+    """`uploaded_at` is optional and inconsistently shaped; ordering must not use it."""
+
+    def test_missing_timestamp_does_not_crash(self):
+        builds = [_build(1), _build(2, uploaded_at=None), _build(3)]
+        self.assertEqual([b.ordinal for b in builds_through(builds, builds[-1])], [1, 2, 3])
+
+    def test_naive_and_aware_timestamps_mix_freely(self):
+        naive = _dt.datetime(2026, 8, 13, 12, 2)  # what "%Y-%m-%d %H:%M:%S" parses to
+        builds = [_build(1), _build(2, uploaded_at=naive), _build(3)]
+        self.assertEqual([b.ordinal for b in builds_through(builds, builds[-1])], [1, 2, 3])
+
+    def test_head_is_always_last_in_the_slice(self):
+        builds = [_build(1), _build(2), _build(3)]
+        order = builds_through(builds, builds[1])
+        self.assertEqual([b.ordinal for b in order], [1, 2])
+        self.assertEqual(order[-1].id, builds[1].id)
+
+    def test_unknown_head_falls_back_to_the_whole_history(self):
+        builds = [_build(1), _build(2)]
+        self.assertEqual(len(builds_through(builds, _build(9))), 2)
 
 
 class JsPythonParity(unittest.TestCase):
@@ -377,9 +396,25 @@ class JsPythonParity(unittest.TestCase):
         self.js = (Path(__file__).resolve().parents[1]
                    / "src" / "atlas_review" / "assets" / "report.js").read_text()
 
-    def test_status_bar_mask_uses_floor_like_python(self):
-        self.assertIn("Math.floor(H * 0.07)", self.js)
-        self.assertNotIn("Math.round(H * 0.07)", self.js)
+    def test_masks_are_floored_like_python(self):
+        # Python slices masks with int(); JS must floor, never round.
+        self.assertIn("Math.floor(box[1] * H)", self.js)
+        self.assertIn("Math.floor((box[1] + box[3]) * H)", self.js)
+        self.assertNotIn("Math.round(box", self.js)
+
+    def test_every_mask_travels_to_the_browser(self):
+        """A policy masking the nav bar must mask it in the report too."""
+        from atlas_review.diff import DiffOptions
+        from atlas_review.report import _policy_masks
+
+        options = DiffOptions(ignore=("status_bar", "android_nav_bar"),
+                              ignore_boxes=[(0.0, 0.5, 1.0, 0.1)])
+        boxes = _policy_masks(options)
+        # status_bar is the checkbox's job; everything else has to be sent.
+        self.assertEqual(len(boxes), 2)
+        self.assertIn([0.0, 0.95, 1.0, 0.05], boxes)
+        self.assertIn([0.0, 0.5, 1.0, 0.1], boxes)
+        self.assertIn("ignoreBoxes", self.js)
 
     def test_block_density_floor_uses_floor_like_python(self):
         # Python: max(1, int(density * block * block))
@@ -388,8 +423,8 @@ class JsPythonParity(unittest.TestCase):
     def test_status_bar_preset_fraction_matches(self):
         from atlas_review.diff import IGNORE_PRESETS
 
-        self.assertEqual(IGNORE_PRESETS["status_bar"][3], 0.07)
-        self.assertIn("0.07", self.js)
+        self.assertEqual(IGNORE_PRESETS["status_bar"], (0.0, 0.0, 1.0, 0.07))
+        self.assertIn("[[0, 0, 1, 0.07]]", self.js)
 
     def test_shift_thresholds_match(self):
         # _detect_shift: max_shift 96, min_gain 0.45, absolute floor 12.0
@@ -503,3 +538,7 @@ class ReportCliAgreement(unittest.TestCase):
         small, big = frame(), frame().resize((W * 3, H * 3))
         a, b, _ = normalize_pair(small, big, 120)
         self.assertEqual((a.width, b.width), (120, 120))
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

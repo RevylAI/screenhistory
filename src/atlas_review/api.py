@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 from .alerts import AlertReport, Policy, check
 from .client import AtlasClient, resolve_pr_numbers
 from .diff import Box, DiffOptions, DiffResult, diff_versions
-from .models import Build, Screen, ScreenVersion
+from .models import Build, Screen, ScreenVersion, builds_through
 from .review import Comment, Decision, ReviewStore
 from .timeline import Blame, ScreenHistory
 
@@ -95,12 +95,21 @@ class AtlasReview:
                 "%s appears in %d build(s); need two to diff" % (hist.screen.name, len(versions))
             )
         after_v = hist.version(self.build(after)) if after is not None else versions[-1]
+        if after_v is None:
+            raise ValueError("screen %s is missing from that build" % hist.screen.name)
         if before is None:
             index = next((i for i, v in enumerate(versions) if v.build.id == after_v.build.id), len(versions) - 1)
-            before_v = versions[max(0, index - 1)]
+            # versions[max(0, index - 1)] would hand back after_v itself here,
+            # and a frame diffed against itself reports a confident "no change".
+            if index == 0:
+                raise ValueError(
+                    "%s first appears in %s -- no earlier build to compare it against"
+                    % (hist.screen.name, after_v.build.label)
+                )
+            before_v = versions[index - 1]
         else:
             before_v = hist.version(self.build(before))
-        if before_v is None or after_v is None:
+        if before_v is None:
             raise ValueError("screen %s is missing from one of those builds" % hist.screen.name)
         return diff_versions(before_v, after_v, options or self.options, hist.target_width())
 
@@ -216,7 +225,7 @@ class AtlasReview:
     def _previous_version(self, hist: ScreenHistory, head: Build):
         """The approved baseline for a screen, else the build before `head`."""
         builds = self.builds()
-        order = [b for b in builds if (b.uploaded_at or "") <= (head.uploaded_at or "") and b.id != head.id]
+        order = [b for b in builds_through(builds, head) if b.id != head.id]
         if self.policy.compare_against == "approved":
             approved = self.store.baseline_build_id(hist.screen.id, [b.id for b in order])
             if approved:

@@ -24,6 +24,7 @@ import webbrowser
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
+from .diff import IGNORE_PRESETS
 from .models import Screen
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -77,6 +78,17 @@ def _frame_payload(image_path: Path, target_width: int) -> Dict[str, Any]:
     scaled.save(buffer, "PNG", optimize=True)
     encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
     return {"src": "data:image/png;base64," + encoded, "w": scaled.width, "h": scaled.height}
+
+
+def _policy_masks(options) -> List[List[float]]:
+    """Masks the browser must apply on top of its status-bar checkbox.
+
+    The checkbox owns `status_bar`; every other preset (nav bar, home
+    indicator) and custom box has to travel in the payload, or `check` masks
+    pixels the report still measures and the two disagree.
+    """
+    status_bar = IGNORE_PRESETS["status_bar"]
+    return [list(box) for box in options.masks() if tuple(box) != status_bar]
 
 
 def build_report(
@@ -134,6 +146,7 @@ def build_report(
             "minRegionPx": review.options.min_region_px,
             "mergeRadius": review.options.merge_radius,
             "ignoreStatusBar": "status_bar" in list(review.options.ignore),
+            "ignoreBoxes": _policy_masks(review.options),
             "detectShift": review.options.detect_shift,
         },
     }
