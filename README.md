@@ -17,52 +17,9 @@ in the page as you drag.
 
 The Python package underneath is a normal SDK and CLI, for CI and scripting.
 
-## Where the screens come from
-
-```
-every build you upload to Revyl
-        ↓  a test run, or an exploration, walks the app
-Atlas    one screenshot per screen, per build   ← this already exists
-        ↓  atlas-review report
-one .html file   the raw frames, inlined. no diffs baked in
-        ↓  you open it
-your browser     diffs any two frames on canvas, as you click
-```
-
-Line by line:
-
-1. **Atlas is the input, not this tool.** Revyl maps your app as you test it and
-   keeps a screenshot of every screen it has seen, tagged with the build. Five
-   builds of one screen means five frames already sitting there.
-2. **`atlas-review report` collects, it does not compute.** It pulls those
-   frames (`revyl atlas graph --screenshots`) plus the git metadata attached to
-   each build (`revyl build list`), and writes them into a single HTML file.
-3. **The frames ship raw, byte for byte.** No diff is pre-rendered, and nothing
-   is re-encoded — re-compressing a JPEG would change the very pixels the tool
-   is about to measure.
-4. **The diffing happens in your browser.** Pick two builds and the detector
-   runs on canvas: per-pixel tolerance, an 8px block grid to kill JPEG speckle,
-   then connected components into boxes.
-5. **That is the whole trick.** Nothing was decided ahead of time, so every
-   build pair works in either direction and the thresholds are draggable:
-
-   ![Dragging the tolerance slider from 96 down to 4: the highlighted band spreads and the percentage climbs from 3.65% to 17.78%](demo/examples/tolerance-slider.gif)
-
-   Shipping n frames instead of n² × 4 rendered diffs also makes the file
-   smaller — the Voyage report went from 1.7 MB to 447 KB when the diffing
-   moved into the browser.
-6. **Your review goes back out.** Approvals and comments land in `review.json`
-   next to the code (or stay in the browser if you were sent a static file).
-
-The catch is that the detector now exists twice: `diff.py` for CI, and
-`assets/report.js` for the page. Tests pin the constants they share
-(`JsPythonParity`), so a gate reading 1.00% and a report showing 0.98% can't
-happen quietly.
-
-## What it adds
-
-Atlas stops at "here are some pictures". `atlas-review` turns that into a
-review workflow:
+Atlas already keeps a screenshot of every screen for every build. That is useful
+on its own, but it stops at "here are some pictures". `atlas-review` turns it
+into a review workflow:
 
 | What it adds | Command |
 | --- | --- |
@@ -73,6 +30,8 @@ review workflow:
 | Alerts on unexpected visual change | `atlas-review check` |
 | Build names a human can tell apart | everywhere: `#4 6149d68` instead of `34fc6d70-dc0f-…` |
 | Every screen that changed in a build | `atlas-review changes` |
+
+Built on `revyl atlas graph --build <id> --screenshots` and `revyl build list`.
 
 ## Apps with many screens
 
@@ -111,6 +70,30 @@ shape) still surfaces as `frame size changed`.
 **Builds with no Atlas data** are reported as such, never as "nothing changed".
 A build nothing was observed on cannot be clean; `check` raises a warning and
 `changes` says so explicitly.
+
+## How the report works
+
+The HTML ships the **raw frames**, not pre-rendered diffs, and runs the
+detector on canvas. That is the difference between a tool and a slideshow:
+
+- **Any pair, either direction.** Pre-rendering means someone has to guess
+  which comparisons you'll want; pick a different pair and you get an apology
+  instead of a diff.
+- **Live thresholds.** Tolerance, minimum region size and merge radius are
+  sliders. Retuning re-diffs in place rather than requiring a re-run:
+
+  ![Dragging the tolerance slider from 96 down to 4: the highlighted band spreads and the percentage climbs from 3.65% to 17.78%](demo/examples/tolerance-slider.gif)
+
+- **It shrinks.** n frames instead of n² × 4 renders — the Voyage report went
+  from 1.7 MB to 447 KB when the diffs moved to the browser.
+
+Frames that already fit are embedded byte-for-byte. Re-encoding them would
+inject compression noise into the exact pixels being measured, and the report
+would quietly disagree with the CLI.
+
+The detector exists twice, in `diff.py` and in `assets/report.js`. Tests pin
+the shared constants (`JsPythonParity`) so a CI gate reading 1.00% and a report
+showing 0.98% can't happen silently.
 
 ## Install
 
