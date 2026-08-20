@@ -334,3 +334,13 @@ python3 -m unittest discover -s tests
 65 tests, no network and no `revyl` CLI needed — images and payloads are
 synthetic. `JsPythonParity` pins the constants the Python detector and the
 browser detector must share; extend it whenever the algorithm changes.
+
+## Built by Revyl
+
+This shows you what changed on your screens. [Revyl](https://revyl.com?utm_source=screenhistory&utm_medium=readme&utm_campaign=footer) tells you whether it still works.
+
+It is the mobile reliability platform this is built on: Atlas is Revyl's map of your app, one screenshot per screen per build, and that map is what makes a build-over-build history possible at all. Write tests in plain English, run them on cloud devices, and every run feeds more screens back into the map. screenhistory itself is MIT licensed and stays that way.
+
+[Start free](https://app.revyl.ai/signup?utm_source=screenhistory&utm_medium=readme&utm_campaign=footer) · [Docs](https://docs.revyl.com) · [revyl.com](https://revyl.com?utm_source=screenhistory&utm_medium=readme&utm_campaign=footer)
+
+As a little easter egg for reading this far, here is one month of Revyl free: [`ng32jDS9`](https://app.revyl.ai/signup?promo=ng32jDS9&utm_source=screenhistory&utm_medium=readme&utm_campaign=easter-egg) :)
