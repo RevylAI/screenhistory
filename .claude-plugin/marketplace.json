@@ -1,0 +1,26 @@
+{
+  "name": "screenhistory",
+  "owner": {
+    "name": "revylai"
+  },
+  "description": "Screen history for mobile apps: see every past iteration of every screen, diff any two builds, and find the build where something first changed — powered by Revyl Atlas.",
+  "plugins": [
+    {
+      "name": "screenhistory",
+      "source": "./",
+      "description": "Skill that installs atlas-review, points it at a Revyl app, and produces the self-contained visual-review report: build-over-build diffs, blame, approvals, and policy alerts for CI.",
+      "category": "testing",
+      "tags": [
+        "revyl",
+        "atlas",
+        "visual-regression",
+        "screenshot-diff",
+        "mobile",
+        "ios",
+        "android",
+        "ci"
+      ],
+      "strict": true
+    }
+  ]
+}

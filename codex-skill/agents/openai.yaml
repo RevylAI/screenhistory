@@ -1,0 +1,4 @@
+interface:
+  display_name: "Screen history"
+  short_description: "See every past iteration of every screen in a mobile app: build-over-build diffs, change blame, approvals, and a self-contained visual-review report."
+  default_prompt: "Use $screenhistory to set up atlas-review against my Revyl app and build the screen-history report."

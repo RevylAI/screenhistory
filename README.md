@@ -8,6 +8,12 @@ direction, flip between four comparison modes, drag the detection thresholds,
 approve or comment. No server, no build step, nothing to install for whoever
 you send it to.
 
+![Dragging the detection tolerance in the report: the highlighted regions, the region list and the percentage all recompute live](demo/examples/tolerance-slider.gif)
+
+Tolerance 96 → 4 on one screen, and back. Nothing here is pre-rendered — the
+detector runs on canvas in the page, so every threshold is live and every build
+pair is available in either direction.
+
 The Python package underneath is a normal SDK and CLI, for CI and scripting.
 
 Atlas already keeps a screenshot of every screen for every build. That is useful
@@ -300,11 +306,27 @@ it first. Screens are cached under `.atlas-review/cache` keyed by build id;
   widget appear". In a list that reflows, a fixed band changes whenever content
   above it grows.
 
+## Let an agent set it up
+
+The repo ships as a skill, so Claude Code or Codex can wire it up against your
+app without you reading any of the above:
+
+```bash
+git clone https://github.com/RevylAI/screenhistory
+claude   # then: "use the screenhistory skill on my app"
+```
+
+`SKILL.md` at the root is the Claude Code / plugin entry point (`.claude-plugin/`
+holds the manifests); `codex-skill/` is the Codex twin. The skill checks the
+`revyl` CLI is authenticated, confirms your builds are actually mapped in Atlas,
+scaffolds `.atlas-review.json`, and builds the report.
+
 ## Tests
 
 ```bash
 python3 -m unittest discover -s tests
 ```
 
-45 tests, no network and no `revyl` CLI needed — images and payloads are
-synthetic.
+65 tests, no network and no `revyl` CLI needed — images and payloads are
+synthetic. `JsPythonParity` pins the constants the Python detector and the
+browser detector must share; extend it whenever the algorithm changes.

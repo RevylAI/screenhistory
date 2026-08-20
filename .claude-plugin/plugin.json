@@ -1,0 +1,24 @@
+{
+  "name": "screenhistory",
+  "displayName": "Screen history — every past iteration of every screen",
+  "description": "Sets up and drives atlas-review against a Revyl app: build-over-build image diffs of every Atlas screen, commit/PR/author provenance, first-changed-build blame, approvals and comments, policy alerts for CI, and a self-contained HTML report that runs the detector in the browser so any build pair can be compared in either direction.",
+  "version": "0.1.0",
+  "author": {
+    "name": "revylai",
+    "url": "https://revyl.com"
+  },
+  "homepage": "https://github.com/RevylAI/screenhistory",
+  "repository": "https://github.com/RevylAI/screenhistory",
+  "license": "MIT",
+  "keywords": [
+    "revyl",
+    "atlas",
+    "visual-regression",
+    "screenshot-diff",
+    "mobile",
+    "ios",
+    "android",
+    "code-review",
+    "ci"
+  ]
+}
