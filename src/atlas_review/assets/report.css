@@ -25,6 +25,11 @@
   --ui:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
   --rail:264px;
   --side:310px;
+  --dur-1:120ms;
+  --dur-2:180ms;
+  --dur-3:280ms;
+  --ease-out:cubic-bezier(.165,.84,.44,1);
+  --ease-in-out:cubic-bezier(.645,.045,.355,1);
 }
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){
@@ -77,6 +82,20 @@ body{
 button,select,input,textarea{font:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* Motion is deliberately one rule: every interactive surface settles the same
+   way, so nothing in the UI feels like it belongs to a different app. Colour
+   moves fast (150ms) because it reads as feedback; shape moves slower (180ms)
+   because it reads as movement. */
+.screens button,.frame,.card,.ghost,.acts button,.seg button,.post,.home,.crumb .link,
+.regions li,.railtools input,.railtools select,select,textarea{
+  transition:background-color 150ms ease,border-color 150ms ease,color 150ms ease,
+             box-shadow var(--dur-2) var(--ease-out),transform var(--dur-2) var(--ease-out),
+             opacity var(--dur-1) ease;
+}
+.ghost:active,.acts button:active,.post:active,.seg button:active,.card:active,.frame:active{
+  transform:scale(.985);transition-duration:80ms;
+}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .num{font-variant-numeric:tabular-nums}
 
@@ -124,7 +143,14 @@ button,select,input,textarea{font:inherit;color:inherit}
 .stage{display:flex;flex-direction:column;min-width:0;background:var(--ground)}
 .bar{position:sticky;top:0;z-index:10;background:var(--surface);border-bottom:1px solid var(--line);
      padding:10px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--surface)}
+/* `overflow:hidden` keeps the rounded corners, so the focus ring has to be
+   drawn inside the buttons; and a class-level `display` beats the UA rule for
+   [hidden], which is why this needs saying out loud. */
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;
+     background:var(--surface);max-width:100%;overflow-x:auto;scrollbar-width:none}
+.seg[hidden]{display:none}
+.seg::-webkit-scrollbar{display:none}
+.seg button:focus-visible{outline-offset:-2px;border-radius:9px}
 .seg button{border:0;background:none;padding:7px 12px;cursor:pointer;font-size:13px;
             border-left:1px solid var(--line);white-space:nowrap}
 .seg button:first-child{border-left:0}
@@ -137,16 +163,31 @@ select{padding:7px 9px;border:1px solid var(--line);border-radius:9px;background
 .ghost{border:1px solid var(--line);background:var(--surface);border-radius:9px;padding:7px 11px;
        cursor:pointer;font-size:13px}
 .ghost:hover{border-color:var(--line-strong)}
+.ghost[disabled]{opacity:.55;cursor:progress}
+@media (max-width:900px){
+  .bar{row-gap:8px}
+  .bar .spacer{display:none}
+}
 
-.canvas-wrap{padding:20px 16px 28px;display:flex;justify-content:center;min-height:0}
+/* Reserve the height: highlight renders one frame tall, side-by-side renders
+   two frames wide and half as tall, and without a floor the footer jumps every
+   time the mode changes. */
+.canvas-wrap{padding:20px 16px 28px;display:flex;justify-content:center;align-items:flex-start;
+             min-height:min(70vh,700px);transition:opacity var(--dur-1) ease}
+.canvas-wrap[data-busy="true"]{opacity:.5}
 .canvas-card{background:var(--surface);border:1px solid var(--line);border-radius:14px;
              box-shadow:var(--shadow);padding:14px;max-width:100%;overflow:auto}
 canvas{display:block;max-width:100%;height:auto;border-radius:8px}
-.swipe-host{position:relative;touch-action:none;cursor:ew-resize}
+.swipe-host{position:relative;touch-action:none;cursor:grab}
+.swipe-host:active{cursor:grabbing}
+.swipe-host:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .swipe-line{position:absolute;top:0;bottom:0;width:2px;background:var(--accent);pointer-events:none}
 .swipe-line::after{content:"";position:absolute;top:50%;left:50%;width:26px;height:26px;
   transform:translate(-50%,-50%);border-radius:50%;background:var(--accent);
-  box-shadow:0 0 0 3px var(--surface)}
+  box-shadow:0 0 0 3px var(--surface);
+  transition:transform 140ms var(--ease-out),box-shadow 140ms ease}
+.swipe-host:hover .swipe-line::after{transform:translate(-50%,-50%) scale(1.12)}
+.swipe-host:active .swipe-line::after{transform:translate(-50%,-50%) scale(.92)}
 
 .readout{padding:0 16px 22px;display:flex;flex-direction:column;gap:10px;align-items:center}
 .headline{font-size:14px;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;justify-content:center}
@@ -158,7 +199,9 @@ canvas{display:block;max-width:100%;height:auto;border-radius:8px}
 .regions{list-style:none;margin:0;padding:0;display:flex;gap:6px;flex-wrap:wrap;justify-content:center;
          max-width:760px}
 .regions li{font-size:12px;border:1px solid var(--line);border-radius:20px;padding:3px 10px;
-            background:var(--surface);cursor:default}
+            background:var(--surface);cursor:default;display:inline-flex;gap:6px;align-items:center}
+.regions li .ix{font-family:var(--mono);font-size:10.5px;font-weight:700;opacity:.75}
+.regions li.more{color:var(--muted)}
 .regions li.moved{border-color:var(--moved);background:var(--moved-soft);color:var(--moved)}
 .regions li.changed{border-color:var(--change);background:var(--change-soft);color:var(--change)}
 .empty{padding:60px 20px;text-align:center;color:var(--muted)}
@@ -199,8 +242,9 @@ canvas{display:block;max-width:100%;height:auto;border-radius:8px}
 .acts{display:flex;gap:8px}
 .acts button{flex:1;padding:9px;border-radius:9px;border:1px solid var(--line);background:var(--surface);
              cursor:pointer;font-weight:600;font-size:13px}
-.acts button.ap:hover{background:var(--ok-soft);color:var(--ok);border-color:transparent}
-.acts button.rj:hover{background:var(--change-soft);color:var(--change);border-color:transparent}
+.acts button[disabled]{opacity:.45;cursor:not-allowed}
+.acts button:not([disabled]).ap:hover{background:var(--ok-soft);color:var(--ok);border-color:transparent}
+.acts button:not([disabled]).rj:hover{background:var(--change-soft);color:var(--change);border-color:transparent}
 .cmt{border:1px solid var(--line);border-radius:9px;padding:9px 11px;font-size:13px;background:var(--surface-2)}
 .cmt+.cmt{margin-top:7px}
 .cmt .who{font-size:11px;color:var(--muted);margin-bottom:3px}
@@ -244,12 +288,20 @@ kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-b
 .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px;
       cursor:pointer;text-align:left;color:inherit;display:flex;flex-direction:column;gap:7px;
       box-shadow:var(--shadow)}
-.card:hover{border-color:var(--line-strong)}
+/* Up only, and only 2px: a card that moves toward the cursor can't slide out
+   from under it. */
+.card:hover{border-color:var(--line-strong);transform:translateY(-2px);
+            box-shadow:0 2px 4px rgba(20,22,28,.07),0 10px 24px rgba(20,22,28,.08)}
+.card:active{transform:translateY(-1px) scale(.995);transition-duration:80ms}
+.card[data-stale="true"] .thumb{opacity:.4}
 .card[data-state="changed"]{border-color:var(--change)}
 .card[data-state="missing"]{opacity:.62}
 .thumb{background:#fff;border:1px solid var(--line);border-radius:7px;overflow:hidden;
        aspect-ratio:1/2;display:flex;align-items:flex-start;justify-content:center}
-.thumb canvas,.thumb img{width:100%;height:auto;display:block}
+@keyframes thumb-in{from{opacity:0}to{opacity:1}}
+.thumb canvas,.thumb img{width:100%;height:auto;display:block;
+  animation:thumb-in var(--dur-2) var(--ease-out) both}
+.thumb .ghosted{opacity:.35;filter:grayscale(1)}
 .cname{font-weight:650;font-size:13px;overflow-wrap:anywhere}
 .cmeta{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;font-size:11.5px}
 .cmeta b{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:13px}

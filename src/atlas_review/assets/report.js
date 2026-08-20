@@ -18,7 +18,7 @@ try { local = JSON.parse(localStorage.getItem(LSKEY)) || local; } catch (e) {}
 
 var opts = Object.assign({
   tolerance: 32, block: 8, minBlockDensity: 0.06, minRegionPx: 220,
-  mergeRadius: 2, ignoreStatusBar: true, detectShift: true
+  mergeRadius: 2, ignoreStatusBar: true, detectShift: true, ignoreBoxes: []
 }, DATA.defaults || {});
 
 /* `before`/`after` are app-wide build ids, not per-screen. That is what makes
@@ -26,6 +26,7 @@ var opts = Object.assign({
    and drilling into a screen keeps the comparison you were already looking at. */
 var ui = { view: "overview", screen: null, before: null, after: null,
            mode: "highlight", swipe: 0.5, filter: "", sort: "change" };
+var overviewPair = "";  // the build pair `overview` was measured against
 var deltas = {};        // screenId -> { buildId: percent } for adjacent pairs
 var firstChange = {};   // screenId -> buildId
 var overview = {};      // screenId -> {percent, regions, moved, missing} for the current pair
@@ -126,16 +127,38 @@ function grayscale(data, w, h) {
 
 /* Same shape as the Python detector: tolerance, then a block grid with a
    density floor to kill JPEG speckle, then connected components. */
+function ignoreMask(W, H, o) {
+  // Fractional (x, y, w, h) boxes, floored -- not rounded -- because the
+  // Python detector slices with int(), and the two must agree to the digit or
+  // a CI gate and this page will contradict each other. The checkbox owns the
+  // status bar; the rest ride in the payload from the policy.
+  var boxes = o.ignoreStatusBar ? [[0, 0, 1, 0.07]] : [];
+  boxes = boxes.concat(o.ignoreBoxes || []);
+  if (!boxes.length) return null;
+  var m = new Uint8Array(W * H), count = 0;
+  for (var k = 0; k < boxes.length; k++) {
+    var box = boxes[k];
+    var x0 = Math.max(0, Math.floor(box[0] * W)), y0 = Math.max(0, Math.floor(box[1] * H));
+    var x1 = Math.min(W, Math.floor((box[0] + box[2]) * W));
+    var y1 = Math.min(H, Math.floor((box[1] + box[3]) * H));
+    for (var y = y0; y < y1; y++) {
+      for (var x = x0; x < x1; x++) {
+        var i = y * W + x;
+        if (!m[i]) { m[i] = 1; count++; }
+      }
+    }
+  }
+  return { mask: m, count: count };
+}
+
 function computeDiff(A, B, W, H, o) {
   var a = A.data, b = B.data, n = W * H;
   var raw = new Uint8Array(n);
-  // floor, not round: the Python detector slices with int(), and the two must
-  // agree to the digit or a CI gate and this page will contradict each other.
-  var ignoreRows = o.ignoreStatusBar ? Math.floor(H * 0.07) : 0;
-  var comparable = n - ignoreRows * W;
+  var ig = ignoreMask(W, H, o);
+  var comparable = n - (ig ? ig.count : 0);
 
   for (var i = 0, j = 0; i < n; i++, j += 4) {
-    if (i < ignoreRows * W) continue;
+    if (ig && ig.mask[i]) continue;
     var d = Math.abs(a[j] - b[j]);
     var d2 = Math.abs(a[j + 1] - b[j + 1]); if (d2 > d) d = d2;
     var d3 = Math.abs(a[j + 2] - b[j + 2]); if (d3 > d) d = d3;
@@ -266,6 +289,8 @@ function describe(region) {
 
 /* ----------------------------------------------------------- renderers */
 
+function plural(n, word) { return n + " " + word + (n === 1 ? "" : "s"); }
+
 function css(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
@@ -302,6 +327,9 @@ function renderHighlight(canvas, A, B, diff) {
   var src = B.data, dst = out.data;
   var band = dilate(diff.mask, W, H, 2);
   var changeRGB = rgb(css("--change")), movedRGB = rgb(css("--moved"));
+  // Wash toward the page surface, not toward white: hard-coding white turns the
+  // unchanged 92% of a screenshot into the brightest thing on a dark page.
+  var washRGB = rgb(css("--surface"));
 
   var movedMask = new Uint8Array(W * H);
   diff.regions.forEach(function (r) {
@@ -313,8 +341,8 @@ function renderHighlight(canvas, A, B, diff) {
 
   for (var i = 0, j = 0; i < W * H; i++, j += 4) {
     var r0 = src[j], g0 = src[j + 1], b0 = src[j + 2];
-    if (!band[i]) {                       // wash unchanged areas toward white
-      r0 += (255 - r0) * 0.8; g0 += (255 - g0) * 0.8; b0 += (255 - b0) * 0.8;
+    if (!band[i]) {                       // wash unchanged areas toward the page
+      r0 += (washRGB[0] - r0) * 0.8; g0 += (washRGB[1] - g0) * 0.8; b0 += (washRGB[2] - b0) * 0.8;
     }
     if (diff.mask[i]) {                   // tint by what kind of change it is
       var t = movedMask[i] ? movedRGB : changeRGB, s = movedMask[i] ? 0.3 : 0.35;
@@ -390,34 +418,59 @@ function renderSwipe(canvas, A, B, diff, split) {
 
 /* ----------------------------------------------------------- overview */
 
+/* Every number in `overview` belongs to one build pair. Anything that reads it
+   calls this first, so a pair changed in the screen view can't leave the
+   overview showing confident numbers for a comparison nobody is looking at. */
+function freshOverview() {
+  var key = ui.before + "\u2192" + ui.after;
+  if (overviewPair !== key) { overview = {}; overviewPair = key; }
+}
+
 /* Every screen measured between the same two builds. On an app with one
    screen this is redundant; on a real one it is the only question worth
    asking first -- "what does this build actually look different in?" */
 function paintOverview() {
+  freshOverview();
   var token = ++overviewToken;
   var host = el("stage-body");
   var rows = visibleScreens();
 
-  host.innerHTML = '<div class="grid" id="grid">' + rows.map(function (s) {
-    return '<button type="button" class="card" data-screen="' + esc(s.id) + '" id="card-' + esc(s.id) + '">' +
-      '<div class="thumb" id="thumb-' + esc(s.id) + '"></div>' +
-      '<div class="cname">' + esc(s.name) + "</div>" +
-      '<div class="cmeta" id="cmeta-' + esc(s.id) + '">measuring…</div></button>';
-  }).join("") + "</div>";
   if (!rows.length) {
     host.innerHTML = '<p class="empty">No screens match “' + esc(ui.filter) + '”.</p>';
     return;
   }
-  Array.prototype.forEach.call(host.querySelectorAll(".card"), function (card) {
-    card.addEventListener("click", function () { openScreen(card.dataset.screen); });
-  });
+
+  // Re-measuring the same set of screens keeps the cards that are already up,
+  // dimmed, instead of tearing the grid down to a page of "measuring…". On a
+  // 40-screen app that is over a second of empty where a full grid just was.
+  var grid = el("grid");
+  var reusable = !!grid && grid.querySelectorAll(".card").length === rows.length &&
+    rows.every(function (s) { return !!el("card-" + s.id); });
+
+  if (reusable) {
+    rows.forEach(function (s) {
+      el("card-" + s.id).dataset.stale = "true";
+      var meta = el("cmeta-" + s.id);
+      if (meta) meta.innerHTML = '<span class="mut">measuring…</span>';
+    });
+  } else {
+    host.innerHTML = '<div class="grid" id="grid">' + rows.map(function (s) {
+      return '<button type="button" class="card" data-screen="' + esc(s.id) + '" id="card-' + esc(s.id) + '">' +
+        '<div class="thumb" id="thumb-' + esc(s.id) + '"></div>' +
+        '<div class="cname">' + esc(s.name) + "</div>" +
+        '<div class="cmeta" id="cmeta-' + esc(s.id) + '">measuring…</div></button>';
+    }).join("") + "</div>";
+    Array.prototype.forEach.call(host.querySelectorAll(".card"), function (card) {
+      card.addEventListener("click", function () { openScreen(card.dataset.screen); });
+    });
+  }
 
   var i = 0;
   function step() {
-    if (token !== overviewToken) return;
+    if (token !== overviewToken || ui.view !== "overview") return;
     if (i >= rows.length) { paintOverviewSummary(); applyRanking(rows); paintRail(); return; }
     measure(rows[i]).then(function (res) {
-      if (token !== overviewToken) return;
+      if (token !== overviewToken || ui.view !== "overview") return;
       overview[rows[i].id] = res;
       paintCard(rows[i], res);
       i++;
@@ -452,10 +505,14 @@ function paintCard(s, res) {
   var st = statusOf(s.id, ui.after);
   var pill = st !== "pending" ? '<span class="pill ' + st + '">' + st + "</span>" : "";
 
+  delete card.dataset.stale;
   if (res.missing) {
     card.dataset.state = "missing";
-    var f = frameFor(s, ui.after) || frameFor(s, ui.before);
-    thumb.innerHTML = f ? '<img src="' + srcOf(f) + '" alt="">' : "";
+    // Fall back to the last frame we have: an empty box reads as a broken
+    // image, where a greyed-out screenshot reads as "not in this pair".
+    var f = frameFor(s, ui.after) || frameFor(s, ui.before) || s.frames[s.frames.length - 1];
+    var ghost = !frameFor(s, ui.after) && !frameFor(s, ui.before) ? ' class="ghosted"' : "";
+    thumb.innerHTML = f ? '<img' + ghost + ' src="' + srcOf(f) + '" alt="">' : "";
     meta.innerHTML = '<span class="mut">' +
       (res.broken ? "could not measure" : (res.inAfter ? "new in this build" : "not in this build")) +
       "</span>" + pill;
@@ -480,13 +537,31 @@ function applyRanking(rows) {
     var pa = a && !a.missing ? a.percent : -1, pb = b && !b.missing ? b.percent : -1;
     return pb !== pa ? pb - pa : p.name.localeCompare(q.name);
   });
+  // FLIP: measure, reorder, then animate each card from where it used to be.
+  // Without this every card in the grid jumps to a new slot on the same tick.
+  var first = {};
+  rows.forEach(function (s) {
+    var node = el("card-" + s.id);
+    if (node) first[s.id] = node.getBoundingClientRect();
+  });
   ranked.forEach(function (s, index) {
     var card = el("card-" + s.id);
     if (card) card.style.order = index;
   });
+  if (window.matchMedia("(prefers-reduced-motion:reduce)").matches) return;
+  rows.forEach(function (s) {
+    var card = el("card-" + s.id);
+    if (!card || !first[s.id] || !card.animate) return;
+    var last = card.getBoundingClientRect();
+    var dx = first[s.id].left - last.left, dy = first[s.id].top - last.top;
+    if (!dx && !dy) return;
+    card.animate([{ transform: "translate(" + dx + "px," + dy + "px)" }, { transform: "none" }],
+      { duration: 280, easing: "cubic-bezier(.645,.045,.355,1)" });
+  });
 }
 
 function paintOverviewSummary() {
+  freshOverview();
   var rows = visibleScreens();
   var done = rows.filter(function (s) { return overview[s.id]; });
   var changed = done.filter(function (s) { return overview[s.id].percent > 0; });
@@ -526,6 +601,7 @@ function visibleScreens() {
 
 function openScreen(id) {
   ui.view = "screen";
+  window.scrollTo(0, 0);
   selectScreen(id);
 }
 
@@ -533,7 +609,6 @@ function openScreen(id) {
    the screen view can't drift apart. */
 function repaint() {
   if (ui.view === "overview") {
-    overview = {};
     syncChrome(); paintRail(); paintOverview();
     el("side").innerHTML = overviewSide();
   } else {
@@ -543,6 +618,7 @@ function repaint() {
 function openOverview() {
   ui.view = "overview";
   ui.screen = null;
+  window.scrollTo(0, 0);
   syncChrome();
   paintRail();
   paintOverview();
@@ -551,6 +627,7 @@ function openOverview() {
 }
 
 function overviewSide() {
+  freshOverview();
   var b = buildById(ui.after);
   var measured = DATA.screens.filter(function (s) { return overview[s.id]; });
   var changed = measured.filter(function (s) { return overview[s.id].percent > 0; }).length;
@@ -585,14 +662,33 @@ function paintStage() {
   var token = ++renderToken;
   var pair = currentPair();
   var host = el("stage-body");
+  // Both of these would otherwise diff a frame against itself and report a
+  // confident 0.00%.
+  if (pair.screen.frames.length === 1) {
+    host.innerHTML = '<p class="empty">' + esc(pair.screen.name) + " only appears in " +
+      esc(buildById(pair.screen.frames[0].build_id).label) +
+      " — no other build of this screen to compare it against.</p>";
+    el("readout").innerHTML = "";
+    return;
+  }
+  if (ui.before === ui.after) {
+    host.innerHTML = '<p class="empty">Both pickers are on ' + esc(buildById(ui.after).label) +
+      " — choose two different builds to compare.</p>";
+    el("readout").innerHTML = "";
+    return;
+  }
   if (!pair.before || !pair.after) {
     host.innerHTML = '<p class="empty">' + esc(pair.screen.name) +
       ' is not present in both of those builds.</p>';
     return;
   }
   var W = Math.max(pair.before.w, pair.after.w), H = Math.max(pair.before.h, pair.after.h);
+  // Only say "working" if it actually takes a moment -- flashing this on every
+  // fast repaint is worse than saying nothing.
+  var busy = setTimeout(function () { host.dataset.busy = "true"; }, 140);
+  function done() { clearTimeout(busy); delete host.dataset.busy; }
   Promise.all([pixels(pair.before, W, H), pixels(pair.after, W, H)]).then(function (px) {
-    if (token !== renderToken) return;
+    if (token !== renderToken) { done(); return; }
     var A = px[0], B = px[1];
     var diff = computeDiff(A, B, W, H, opts);
     var canvas = document.createElement("canvas");
@@ -622,24 +718,44 @@ function paintStage() {
     host.appendChild(card);
     window.__lastCanvas = canvas;
     paintReadout(diff, bLabel, aLabel);
+    done();
   }).catch(function (err) {
+    done();
     host.innerHTML = '<p class="empty">Could not render: ' + esc(err.message) + "</p>";
   });
 }
 
 function attachSwipe(wrap, canvas, A, B, diff, line) {
+  function moveTo(t) {
+    ui.swipe = Math.min(1, Math.max(0, t));
+    line.style.left = (ui.swipe * 100) + "%";
+    renderSwipe(canvas, A, B, diff, ui.swipe);
+  }
   function move(clientX) {
     var box = canvas.getBoundingClientRect();
-    var t = Math.min(1, Math.max(0, (clientX - box.left) / box.width));
-    ui.swipe = t;
-    line.style.left = (t * 100) + "%";
-    renderSwipe(canvas, A, B, diff, t);
+    moveTo((clientX - box.left) / box.width);
   }
   wrap.addEventListener("pointerdown", function (e) {
     wrap.setPointerCapture(e.pointerId); move(e.clientX);
   });
   wrap.addEventListener("pointermove", function (e) {
     if (e.buttons) move(e.clientX);
+  });
+
+  wrap.tabIndex = 0;
+  wrap.setAttribute("role", "slider");
+  wrap.setAttribute("aria-label", "Swipe between " + buildById(ui.before).label +
+    " and " + buildById(ui.after).label);
+  wrap.addEventListener("keydown", function (e) {
+    var step = e.shiftKey ? 0.1 : 0.02, t = ui.swipe;
+    if (e.key === "ArrowLeft") t -= step;
+    else if (e.key === "ArrowRight") t += step;
+    else if (e.key === "Home") t = 0;
+    else if (e.key === "End") t = 1;
+    else return;
+    // The document handler binds the arrows to stepping through builds.
+    e.preventDefault(); e.stopPropagation();
+    moveTo(t);
   });
 }
 
@@ -665,9 +781,14 @@ function paintReadout(diff, bLabel, aLabel) {
       "<span>of pixels differ &middot; " + esc(bits.join(", ")) + "</span>" +
       '<span class="mono" style="color:var(--muted)">' + esc(bLabel) + " → " + esc(aLabel) + "</span></div>" +
     '<div class="legend">' + legend + "</div>" +
-    '<ul class="regions">' + diff.regions.slice(0, 14).map(function (r) {
-      return '<li class="' + r.kind + '">' + esc(describe(r)) + "</li>";
-    }).join("") + "</ul>";
+    '<ul class="regions">' + diff.regions.slice(0, 14).map(function (r, i) {
+      // The canvas tags each box 1..N; without the same number here, seven
+      // pills reading "moved down 60px" identify nothing.
+      return '<li class="' + r.kind + '"><span class="ix">' + (i + 1) + "</span>" +
+        esc(describe(r)) + "</li>";
+    }).join("") +
+    (diff.regions.length > 14
+      ? '<li class="more">+' + (diff.regions.length - 14) + " more</li>" : "") + "</ul>";
 }
 
 /* Adjacent-build deltas for the filmstrip, and the first build that changed.
@@ -679,7 +800,7 @@ function computeTimeline(screen) {
   deltas[screen.id] = acc;
   var i = 1;
   function step() {
-    if (i >= screen.frames.length) { paintFilm(); paintSide(); return; }
+    if (i >= screen.frames.length) { paintFilm(); paintBlame(); return; }
     var prev = screen.frames[i - 1], cur = screen.frames[i];
     var W = Math.max(prev.w, cur.w), H = Math.max(prev.h, cur.h);
     Promise.all([pixels(prev, W, H), pixels(cur, W, H)]).then(function (px) {
@@ -738,9 +859,11 @@ function selectAfter(buildId) {
 
 function paintSide() {
   var s = screenById(ui.screen), b = buildById(ui.after);
+  // A screen with one frame leaves the app-wide pair alone, so the panel can
+  // be looking at a build this screen was never captured in.
+  var frame = frameFor(s, ui.after);
   var st = statusOf(s.id, ui.after);
   var cmts = commentsOf(s.id, ui.after);
-  var fc = firstChange[s.id] ? buildById(firstChange[s.id]) : null;
 
   var prov = "<h2>Build " + esc(b.label) + "</h2><dl class='prov'>" +
     "<dt>Commit</dt><dd>" + (b.commit_url
@@ -755,15 +878,16 @@ function paintSide() {
     "<dt>When</dt><dd>" + esc(b.relative_time) + "</dd>" +
     "<dt>Message</dt><dd>" + esc(b.message || "") + "</dd>" +
     "<dt>Status</dt><dd><b>" + esc(st) + "</b></dd>" +
-    "<dt>Frames</dt><dd class='num'>" + esc(frameFor(s, ui.after).observation_count) + " observations</dd>" +
-    "</dl>";
+    "<dt>Frames</dt><dd class='num'>" +
+      (frame ? esc(frame.observation_count) + " observations" : "not captured in this build") +
+      "</dd></dl>";
 
-  var blame = fc ? '<div class="blame"><div class="t">First visual change</div><b class="mono">' +
-    esc(fc.label) + "</b> — " + esc(fc.message || "") +
-    (fc.author ? " · " + esc(fc.author) : "") + "</div>" : "";
+  var blame = '<div id="blame-slot">' + blameHtml(s) + "</div>";
 
-  var acts = '<div class="acts"><button class="ap" data-decide="approved">Approve</button>' +
-    '<button class="rj" data-decide="rejected">Reject</button></div>';
+  // Nothing to sign off on when there is no frame at this build.
+  var off = frame ? "" : " disabled";
+  var acts = '<div class="acts"><button class="ap" data-decide="approved"' + off + ">Approve</button>" +
+    '<button class="rj" data-decide="rejected"' + off + ">Reject</button></div>";
 
   var comments = "<h2>Comments (" + cmts.length + ")</h2>" +
     (cmts.length ? cmts.map(function (c) {
@@ -783,8 +907,46 @@ function paintSide() {
       (opts.detectShift ? " checked" : "") + "> Detect moved content</label>" +
     "</div>";
 
+  // paintSide() replaces the whole panel, so anything the reviewer was in the
+  // middle of -- a comment, a slider they are arrowing through -- has to be
+  // carried across by hand.
+  var prevTa = el("ta"), draft = prevTa ? prevTa.value : "";
+  var focused = document.activeElement ? document.activeElement.id : "";
+
   el("side").innerHTML = prov + blame + acts + comments + tuning;
   wireSide();
+
+  var ta = el("ta");
+  if (ta && draft) ta.value = draft;
+  if (focused) { var again = el(focused); if (again && again.focus) again.focus(); }
+}
+
+/* The timeline finishes long after the panel is painted; swapping just this
+   block keeps the sliders (and their focus) exactly where they were. */
+function blameHtml(s) {
+  var fc = firstChange[s.id] ? buildById(firstChange[s.id]) : null;
+  if (!fc) return "";
+  return '<div class="blame"><div class="t">First visual change</div><b class="mono">' +
+    esc(fc.label) + "</b> — " + esc(fc.message || "") +
+    (fc.author ? " · " + esc(fc.author) : "") + "</div>";
+}
+
+function paintBlame() {
+  var slot = el("blame-slot");
+  if (slot && ui.screen) slot.innerHTML = blameHtml(screenById(ui.screen));
+}
+
+/* One repaint per frame while dragging. rAF is the right clock for that, but
+   it never fires in a hidden tab -- which silently freezes the report for
+   anyone driving it from a script or a background tab -- so fall back to a
+   timer when the page is not visible. */
+function coalesced(run) {
+  var id = 0, timer = false;
+  return function () {
+    if (id) { timer ? clearTimeout(id) : cancelAnimationFrame(id); }
+    if (document.hidden) { timer = true; id = setTimeout(function () { id = 0; run(); }, 0); }
+    else { timer = false; id = requestAnimationFrame(function () { id = 0; run(); }); }
+  };
 }
 
 function slider(key, label, min, max, step, value) {
@@ -798,11 +960,12 @@ function wireSide() {
   ["tolerance", "minRegionPx", "mergeRadius"].forEach(function (key) {
     var input = el("opt-" + key);
     if (!input) return;
+    var repaintSoon = coalesced(paintStage);
     input.addEventListener("input", function () {
       opts[key] = Number(input.value);
       el("val-" + key).textContent = input.value;
-      deltas = {}; firstChange = {}; overview = {};
-      paintStage();
+      deltas = {}; firstChange = {}; overview = {}; overviewPair = "";
+      repaintSoon();   // a drag fires far faster than a ~30ms diff
     });
     input.addEventListener("change", function () { computeTimeline(screenById(ui.screen)); });
   });
@@ -811,7 +974,7 @@ function wireSide() {
     if (!box) return;
     box.addEventListener("change", function () {
       opts[key] = box.checked;
-      deltas = {}; firstChange = {}; overview = {};
+      deltas = {}; firstChange = {}; overview = {}; overviewPair = "";
       paintStage(); computeTimeline(screenById(ui.screen));
     });
   });
@@ -853,11 +1016,23 @@ function selectScreen(id) {
   var s = screenById(id);
   ui.screen = id;
   // Keep the build pair when the screen has both frames, so drilling in from
-  // the overview shows the comparison you were already looking at.
-  if (!frameFor(s, ui.after)) ui.after = s.frames[s.frames.length - 1].build_id;
-  if (!frameFor(s, ui.before) || ui.before === ui.after) {
-    var idx = s.frames.findIndex(function (f) { return f.build_id === ui.after; });
-    ui.before = s.frames[Math.max(0, idx - 1)].build_id;
+  // the overview shows the comparison you were already looking at. A screen
+  // with one frame adjusts nothing: the pair is app-wide, so collapsing it
+  // onto that screen's only build would make every other screen read
+  // "identical" the moment you looked at this one.
+  if (s.frames.length > 1) {
+    if (!frameFor(s, ui.after)) ui.after = s.frames[s.frames.length - 1].build_id;
+    if (!frameFor(s, ui.before) || ui.before === ui.after) {
+      var idx = s.frames.findIndex(function (f) { return f.build_id === ui.after; });
+      if (idx > 0) ui.before = s.frames[idx - 1].build_id;
+    }
+    // Snapping `after` back to an older build can leave `before` newer than
+    // it; keep the comparison pointing forwards in time.
+    var all = DATA.builds.map(function (b) { return b.id; });
+    if (all.indexOf(ui.before) > all.indexOf(ui.after)) {
+      var i = all.indexOf(ui.after);
+      if (i > 0) ui.before = all[i - 1];
+    }
   }
   syncChrome(); paintRail(); paintFilm(); paintStage(); paintSide();
   computeTimeline(s);
@@ -866,6 +1041,7 @@ function selectScreen(id) {
 /* The rail is the screen index: filterable, sortable, and showing each
    screen's delta for the current build pair once it has been measured. */
 function paintRail() {
+  freshOverview();
   var rows = visibleScreens();
   el("screens").innerHTML = rows.map(function (s) {
     var sev = severityFor(s.id), res = overview[s.id];
@@ -886,7 +1062,7 @@ function paintRail() {
     btn.addEventListener("click", function () { openScreen(btn.dataset.screen); });
   });
   el("screen-count").textContent = rows.length === DATA.screens.length
-    ? DATA.screens.length + " screens"
+    ? plural(DATA.screens.length, "screen")
     : rows.length + " of " + DATA.screens.length;
 }
 
@@ -942,7 +1118,12 @@ function exportPng() {
   var s = screenById(ui.screen);
   var name = s.name + "-" + buildById(ui.before).label.split(" ")[0] +
              "-to-" + buildById(ui.after).label.split(" ")[0] + "-" + ui.mode + ".png";
-  window.__lastCanvas.toBlob(function (blob) { download(blob, name.replace(/[#\s]/g, "")); });
+  var btn = el("export-png");
+  btn.disabled = true; btn.textContent = "Exporting…";
+  window.__lastCanvas.toBlob(function (blob) {
+    download(blob, name.replace(/[#\s]/g, ""));
+    btn.disabled = false; btn.textContent = "Export PNG";
+  });
 }
 function download(blob, name) {
   var a = document.createElement("a");
@@ -970,8 +1151,8 @@ function boot() {
     return;
   }
   el("app-id").textContent = DATA.app;
-  el("meta").textContent = DATA.screens.length + " screens · " + DATA.builds.length +
-    " builds · " + DATA.generated_at;
+  el("meta").textContent = plural(DATA.screens.length, "screen") + " · " +
+    plural(DATA.builds.length, "build") + " · " + DATA.generated_at;
   el("mode-note").textContent = DATA.served ? "writes to review.json" : "decisions stay in this browser";
 
   el("alerts").innerHTML = DATA.alerts.length ? DATA.alerts.map(function (a) {
@@ -998,6 +1179,7 @@ function boot() {
   el("home").addEventListener("click", openOverview);
   Array.prototype.forEach.call(document.querySelectorAll("#modes button"), function (btn) {
     btn.addEventListener("click", function () {
+      if (ui.view !== "screen") return;   // hidden, but a stray click must not throw
       ui.mode = btn.dataset.mode; syncChrome(); paintStage();
     });
   });
@@ -1005,6 +1187,10 @@ function boot() {
     var t = ui.before; ui.before = ui.after; ui.after = t;
     repaint();
   });
+  // Theme colours are baked into the ImageData, so a flip needs a re-render.
+  var dark = window.matchMedia("(prefers-color-scheme:dark)");
+  if (dark.addEventListener) dark.addEventListener("change", repaint);
+
   el("export-png").addEventListener("click", exportPng);
   el("export-review").addEventListener("click", exportReview);
 
