@@ -8,11 +8,12 @@ direction, flip between four comparison modes, drag the detection thresholds,
 approve or comment. No server, no build step, nothing to install for whoever
 you send it to.
 
-![Dragging the detection tolerance in the report: the highlighted regions, the region list and the percentage all recompute live](demo/examples/tolerance-slider.gif)
+![Dragging the swipe divider across two builds of the same screen: the old build on the left of the divider, the new one on the right](demo/examples/swipe-divider.gif)
 
-Tolerance 96 → 4 on one screen, and back. Nothing here is pre-rendered — the
-detector runs on canvas in the page, so every threshold is live and every build
-pair is available in either direction.
+One screen, two builds, one divider. Left of it is `#4`, right of it is `#5` —
+the search field becomes filter chips, the strikethrough prices resolve, and
+the whole list shifts down. Both frames are in the file; the wipe is computed
+in the page as you drag.
 
 The Python package underneath is a normal SDK and CLI, for CI and scripting.
 
@@ -79,7 +80,10 @@ detector on canvas. That is the difference between a tool and a slideshow:
   which comparisons you'll want; pick a different pair and you get an apology
   instead of a diff.
 - **Live thresholds.** Tolerance, minimum region size and merge radius are
-  sliders. Retuning re-diffs in place rather than requiring a re-run.
+  sliders. Retuning re-diffs in place rather than requiring a re-run:
+
+  ![Dragging the tolerance slider from 96 down to 4: the highlighted band spreads and the percentage climbs from 3.65% to 17.78%](demo/examples/tolerance-slider.gif)
+
 - **It shrinks.** n frames instead of n² × 4 renders — the Voyage report went
   from 1.7 MB to 447 KB when the diffs moved to the browser.
 
